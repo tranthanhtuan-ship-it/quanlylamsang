@@ -1,0 +1,7 @@
+{
+  "name": "Clinical Manager Pro",
+  "description": "A comprehensive Clinical Management System for medical universities. Manages students, lecturers, clinical rotations, attendance, and reporting.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
