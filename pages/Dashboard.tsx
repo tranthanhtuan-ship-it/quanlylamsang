@@ -1,8 +1,8 @@
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { StudentService, LecturerService, AssignmentService, TeachingPlanService, RotationService, OnCallService } from '../services/db';
-import { Users, GraduationCap, ClipboardCheck, AlertCircle, Calendar, Clock, MapPin, FileText, BookOpen, Search, Network, CheckCircle, ArrowRight, RotateCcw } from 'lucide-react';
+import { StudentService, LecturerService, AssignmentService, TeachingPlanService, RotationService, OnCallService, DatabaseAdminService } from '../services/db';
+import { Users, GraduationCap, ClipboardCheck, AlertCircle, Calendar, Clock, MapPin, FileText, BookOpen, Search, Network, CheckCircle, ArrowRight, RotateCcw, Database, Download, Upload, RefreshCcw } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Role, Student, Lecturer, Assignment, TeachingPlan, ClinicalRotation, OnCallSchedule, ShiftTime, DEPARTMENTS } from '../types';
 
@@ -16,6 +16,10 @@ export const Dashboard: React.FC = () => {
   const [myAssignments, setMyAssignments] = useState<Assignment[]>([]);
   const [weeklyPlans, setWeeklyPlans] = useState<Record<string, TeachingPlan[]>>({});
   const [weekDateRange, setWeekDateRange] = useState({ start: '', end: '' });
+
+  // --- ADMIN DB TOOLS STATE ---
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isProcessingDB, setIsProcessingDB] = useState(false);
 
   // --- STUDENT SEARCH STATE ---
   const [searchKeyword, setSearchKeyword] = useState('');
@@ -115,6 +119,60 @@ export const Dashboard: React.FC = () => {
     if (user) loadData();
   }, [user]);
 
+  // --- ADMIN DB HANDLERS ---
+  const handleExportDB = async () => {
+    setIsProcessingDB(true);
+    try {
+      const json = await DatabaseAdminService.exportDatabase();
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ClinicalManager_Backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert("Lỗi khi xuất dữ liệu");
+    } finally {
+      setIsProcessingDB(false);
+    }
+  };
+
+  const handleImportDB = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!window.confirm("CẢNH BÁO: Hành động này sẽ ghi đè toàn bộ dữ liệu hiện tại bằng dữ liệu từ file backup. Bạn có chắc chắn không?")) {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    setIsProcessingDB(true);
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const json = evt.target?.result as string;
+      const success = await DatabaseAdminService.importDatabase(json);
+      if (success) {
+        alert("Khôi phục dữ liệu thành công! Trang web sẽ tải lại.");
+        window.location.reload();
+      } else {
+        alert("File không hợp lệ.");
+      }
+      setIsProcessingDB(false);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleResetDB = async () => {
+    if (window.confirm("NGUY HIỂM: Bạn có chắc chắn muốn xóa sạch toàn bộ dữ liệu và đưa về mặc định? Hành động này không thể hoàn tác!")) {
+      setIsProcessingDB(true);
+      await DatabaseAdminService.resetDatabase();
+      window.location.reload();
+    }
+  };
+
   // --- STUDENT SEARCH LOGIC ---
   const handleStudentSearch = () => {
       if (!searchKeyword.trim()) return alert("Vui lòng nhập Mã SV hoặc Họ tên.");
@@ -208,18 +266,91 @@ export const Dashboard: React.FC = () => {
           <StatCard icon={<AlertCircle size={24} />} color="bg-orange-100 text-orange-600" title="Cảnh báo vắng" value={stats.issues} />
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h2 className="text-lg font-semibold mb-4">Phân bố sinh viên theo khoa</h2>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="students" fill="#0d9488" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h2 className="text-lg font-semibold mb-4">Phân bố sinh viên theo khoa</h2>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="students" fill="#0d9488" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* DATABASE TOOLS PANEL */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col">
+            <div className="flex items-center gap-2 mb-4 border-b border-gray-100 pb-2">
+               <Database size={20} className="text-indigo-600"/>
+               <h2 className="text-lg font-semibold text-gray-800">Quản lý Dữ liệu Hệ thống</h2>
+            </div>
+            <p className="text-sm text-gray-500 mb-6">
+               Do ứng dụng chạy trên môi trường tĩnh (Static Hosting), dữ liệu được lưu trên trình duyệt. 
+               Sử dụng các công cụ dưới đây để sao lưu và đồng bộ dữ liệu giữa các thiết bị.
+            </p>
+            
+            <div className="space-y-4 flex-1">
+                <button 
+                  onClick={handleExportDB}
+                  disabled={isProcessingDB}
+                  className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-indigo-50 hover:border-indigo-200 transition group"
+                >
+                    <div className="flex items-center gap-3">
+                        <div className="bg-indigo-100 p-2 rounded-lg text-indigo-600 group-hover:bg-indigo-200">
+                            <Download size={20}/>
+                        </div>
+                        <div className="text-left">
+                            <p className="font-bold text-gray-700">Sao lưu dữ liệu (Backup)</p>
+                            <p className="text-xs text-gray-500">Tải về file JSON chứa toàn bộ dữ liệu hiện tại</p>
+                        </div>
+                    </div>
+                </button>
+
+                <div className="relative group">
+                     <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        onChange={handleImportDB} 
+                        accept=".json"
+                        className="hidden"
+                     />
+                     <button 
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isProcessingDB}
+                        className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-green-50 hover:border-green-200 transition"
+                     >
+                        <div className="flex items-center gap-3">
+                            <div className="bg-green-100 p-2 rounded-lg text-green-600 group-hover:bg-green-200">
+                                <Upload size={20}/>
+                            </div>
+                            <div className="text-left">
+                                <p className="font-bold text-gray-700">Khôi phục dữ liệu (Restore)</p>
+                                <p className="text-xs text-gray-500">Tải lên file Backup để đồng bộ dữ liệu mới</p>
+                            </div>
+                        </div>
+                     </button>
+                </div>
+
+                <button 
+                  onClick={handleResetDB}
+                  disabled={isProcessingDB}
+                  className="w-full flex items-center justify-between p-4 border border-red-200 rounded-lg hover:bg-red-50 transition group mt-auto"
+                >
+                    <div className="flex items-center gap-3">
+                        <div className="bg-red-100 p-2 rounded-lg text-red-600 group-hover:bg-red-200">
+                            <RefreshCcw size={20}/>
+                        </div>
+                        <div className="text-left">
+                            <p className="font-bold text-red-700">Reset hệ thống</p>
+                            <p className="text-xs text-red-500">Xóa toàn bộ dữ liệu và quay về mặc định</p>
+                        </div>
+                    </div>
+                </button>
+            </div>
           </div>
         </div>
       </div>

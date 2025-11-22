@@ -245,3 +245,47 @@ export const AuthService = {
     return users.find(u => u.username.toLowerCase() === username.trim().toLowerCase());
   }
 };
+
+// --- DATABASE ADMIN TOOLS (BACKUP / RESTORE) ---
+export const DatabaseAdminService = {
+  // Export all data to a JSON string
+  exportDatabase: async (): Promise<string> => {
+    await delay(500);
+    const db: Record<string, any> = {};
+    Object.values(KEYS).forEach(key => {
+      const data = localStorage.getItem(key);
+      if (data) {
+        db[key] = JSON.parse(data);
+      }
+    });
+    return JSON.stringify(db, null, 2);
+  },
+
+  // Import data from JSON string
+  importDatabase: async (jsonString: string): Promise<boolean> => {
+    try {
+      await delay(500);
+      const db = JSON.parse(jsonString);
+      
+      // Basic validation
+      if (!db || typeof db !== 'object') return false;
+
+      Object.keys(db).forEach(key => {
+        if (Object.values(KEYS).includes(key)) {
+          localStorage.setItem(key, JSON.stringify(db[key]));
+        }
+      });
+      return true;
+    } catch (e) {
+      console.error("Import failed", e);
+      return false;
+    }
+  },
+
+  // Hard Reset
+  resetDatabase: async (): Promise<void> => {
+    await delay(500);
+    localStorage.clear();
+    seedData();
+  }
+};
