@@ -38,9 +38,8 @@ const saveItems = <T,>(key: string, items: T[]) => {
 
 // Initial Seed Data
 const seedData = () => {
-  // Check Users
-  const users = getItems<User>(KEYS.USERS);
-  if (users.length === 0) {
+  // Check Users - ONLY SEED IF KEY DOES NOT EXIST
+  if (localStorage.getItem(KEYS.USERS) === null) {
     const defaultUsers: User[] = [
       { id: 'u1', username: 'admin', fullName: 'Quản trị viên', role: Role.ADMIN },
       { id: 'u2', username: 'gv1', fullName: 'BS. Nguyễn Văn A', role: Role.LECTURER, relatedId: 'l1' },
@@ -51,8 +50,7 @@ const seedData = () => {
   }
 
   // Check Students
-  const students = getItems<Student>(KEYS.STUDENTS);
-  if (students.length === 0) {
+  if (localStorage.getItem(KEYS.STUDENTS) === null) {
     const defaultStudents: Student[] = [
       { id: 's1', studentCode: 'Y2020001', fullName: 'Trần Thị B', classId: 'YK20A', course: 'K46', major: 'Y sỹ đa khoa', academicYear: 3, group: 'Nhom1', dob: '2002-01-15', phone: '0901234567', email: 'b@sv.edu.vn' },
       { id: 's2', studentCode: 'Y2020002', fullName: 'Lê Văn C', classId: 'YK20A', course: 'K46', major: 'Y sỹ đa khoa', academicYear: 3, group: 'Nhom1', dob: '2002-03-20', phone: '0901234568', email: 'c@sv.edu.vn' },
@@ -64,14 +62,20 @@ const seedData = () => {
   }
 
   // Check Lecturers
-  const lecturers = getItems<Lecturer>(KEYS.LECTURERS);
-  if (lecturers.length === 0) {
+  if (localStorage.getItem(KEYS.LECTURERS) === null) {
     const defaultLecturers: Lecturer[] = [
       { id: 'l1', fullName: 'BS. Nguyễn Văn A', department: 'Nội', email: 'a@bv.edu.vn', phone: '0912345678' },
       { id: 'l2', fullName: 'BS. Phạm Thị D', department: 'Ngoại', email: 'd@bv.edu.vn', phone: '0912345679' },
     ];
     saveItems(KEYS.LECTURERS, defaultLecturers);
   }
+
+  // Initialize other keys if they don't exist to prevent null errors on first load
+  if (localStorage.getItem(KEYS.ASSIGNMENTS) === null) saveItems(KEYS.ASSIGNMENTS, []);
+  if (localStorage.getItem(KEYS.ROTATIONS) === null) saveItems(KEYS.ROTATIONS, []);
+  if (localStorage.getItem(KEYS.SCHEDULES) === null) saveItems(KEYS.SCHEDULES, []);
+  if (localStorage.getItem(KEYS.REPORTS) === null) saveItems(KEYS.REPORTS, []);
+  if (localStorage.getItem(KEYS.TEACHING_PLANS) === null) saveItems(KEYS.TEACHING_PLANS, []);
 };
 
 // Execute seed on load
