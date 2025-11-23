@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { StudentService, OnCallService, AssignmentService } from '../services/db';
-import { Student, OnCallSchedule, ShiftTime, Role, DEPARTMENTS, AttendanceStatus, MAJORS, Assignment } from '../types';
+import { StudentService, OnCallService, AssignmentService, RotationService } from '../services/db';
+import { Student, OnCallSchedule, ShiftTime, Role, DEPARTMENTS, AttendanceStatus, MAJORS, Assignment, ClinicalRotation, SUB_DEPARTMENTS } from '../types';
 import { Calendar, CheckCircle, MapPin, Search, Square, CheckSquare, Plus, Filter, Info, List, Trash2, Eye, AlertTriangle, RotateCcw, Clock, Users, Navigation, ExternalLink, Loader2 } from 'lucide-react';
 
 // --- CONSTANTS FOR SHIFT TIMES ---
@@ -27,6 +27,7 @@ export const OnCallSchedulePage: React.FC = () => {
 
   // Create Mode State
   const [filterDept, setFilterDept] = useState<string>(DEPARTMENTS[0]);
+  const [filterSubDept, setFilterSubDept] = useState<string>(''); // NEW: Sub-Dept State
   const [filterMajor, setFilterMajor] = useState<string>('');
   const [filterCourse, setFilterCourse] = useState<string>('');
   const [filterGroup, setFilterGroup] = useState<string>('');
@@ -56,7 +57,8 @@ export const OnCallSchedulePage: React.FC = () => {
   // Data State
   const [students, setStudents] = useState<Student[]>([]);
   const [schedules, setSchedules] = useState<OnCallSchedule[]>([]);
-  const [assignments, setAssignments] = useState<Assignment[]>([]); // Add assignments state
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [rotations, setRotations] = useState<ClinicalRotation[]>([]); // NEW: Rotations state
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
@@ -66,14 +68,16 @@ export const OnCallSchedulePage: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const [sData, scData, aData] = await Promise.all([
+    const [sData, scData, aData, rData] = await Promise.all([
       StudentService.getAll(),
       OnCallService.getAll(),
-      AssignmentService.getAll() // Fetch assignments
+      AssignmentService.getAll(),
+      RotationService.getAll() // Fetch rotations
     ]);
     setStudents(sData);
     setSchedules(scData);
     setAssignments(aData);
+    setRotations(rData);
     setLoading(false);
   };
 
@@ -100,6 +104,11 @@ export const OnCallSchedulePage: React.FC = () => {
   // --- DERIVED DATA ---
   const courses = useMemo(() => [...new Set(students.map(s => s.course))].sort(), [students]);
   const groups = useMemo(() => [...new Set(students.map(s => s.group))].sort(), [students]);
+  
+  // Available Sub Departments based on Main Dept
+  const availableSubDepts = useMemo(() => {
+    return filterDept ? (SUB_DEPARTMENTS[filterDept] || []) : [];
+  }, [filterDept]);
 
   // 1. Determine which students are ALREADY SCHEDULED this week
   const busyStudentIdsInWeek = useMemo(() => {
@@ -110,20 +119,31 @@ export const OnCallSchedulePage: React.FC = () => {
     );
   }, [schedules, weekInfo]);
 
-  // 2. Determine which students are ASSIGNED to the selected Department on the selected Date
-  const assignedStudentIdsForDeptAndDate = useMemo(() => {
+  // 2. Determine VALID students based on Assignments (Admin) OR Rotations (Lecturer)
+  const validStudentIdsForDate = useMemo(() => {
       const validIds = new Set<string>();
-      assignments.forEach(assign => {
-          // Check Department match
-          if (assign.department !== filterDept) return;
-          
-          // Check Date match (Target date must be within Assignment range)
-          if (targetDate >= assign.startDate && targetDate <= assign.endDate) {
-              assign.studentIds.forEach(id => validIds.add(id));
-          }
-      });
+      
+      if (filterSubDept) {
+          // LOGIC 1: Filter by SUB-DEPARTMENT (Lecturer's Rotation)
+          // Find students assigned to this Sub-Dept on this Date
+          rotations.forEach(r => {
+              if (r.mainDepartment === filterDept && 
+                  r.subDepartment === filterSubDept &&
+                  targetDate >= r.startDate && targetDate <= r.endDate) {
+                  validIds.add(r.studentId);
+              }
+          });
+      } else {
+          // LOGIC 2: Filter by MAIN DEPARTMENT (Admin's Assignment) - Default
+          assignments.forEach(assign => {
+              if (assign.department !== filterDept) return;
+              if (targetDate >= assign.startDate && targetDate <= assign.endDate) {
+                  assign.studentIds.forEach(id => validIds.add(id));
+              }
+          });
+      }
       return validIds;
-  }, [assignments, filterDept, targetDate]);
+  }, [assignments, rotations, filterDept, filterSubDept, targetDate]);
 
   // 3. Combine filters
   const filteredStudents = useMemo(() => {
@@ -133,15 +153,15 @@ export const OnCallSchedulePage: React.FC = () => {
       if (filterCourse && s.course !== filterCourse) return false;
       if (filterGroup && s.group !== filterGroup) return false;
       
-      // CRITICAL: Check if student is assigned to this Dept at this Date
-      if (!assignedStudentIdsForDeptAndDate.has(s.id)) return false;
+      // CRITICAL: Check if student is assigned to this context
+      if (!validStudentIdsForDate.has(s.id)) return false;
 
       // Check if already scheduled in this week
       if (busyStudentIdsInWeek.has(s.id)) return false;
 
       return true;
     });
-  }, [students, filterMajor, filterCourse, filterGroup, busyStudentIdsInWeek, assignedStudentIdsForDeptAndDate]);
+  }, [students, filterMajor, filterCourse, filterGroup, busyStudentIdsInWeek, validStudentIdsForDate]);
 
   const filteredScheduleList = useMemo(() => {
     return schedules
@@ -170,6 +190,12 @@ export const OnCallSchedulePage: React.FC = () => {
   }, [schedules, foundStudent, studentSearchStart, studentSearchEnd]);
 
   // --- HANDLERS ---
+
+  const handleDeptChange = (dept: string) => {
+      setFilterDept(dept);
+      setFilterSubDept(''); // Reset sub-dept when main dept changes
+      setSelectedStudentIds(new Set());
+  };
 
   const toggleStudent = (id: string) => {
     const newSet = new Set(selectedStudentIds);
@@ -281,7 +307,6 @@ export const OnCallSchedulePage: React.FC = () => {
                   
                   await OnCallService.save(updatedSchedule);
                   await loadData(); // Refresh UI
-                  // alert("Điểm danh thành công!"); // Optional alert
               } catch (e) {
                   console.error(e);
                   alert("Có lỗi xảy ra khi lưu dữ liệu điểm danh.");
@@ -510,7 +535,7 @@ export const OnCallSchedulePage: React.FC = () => {
 
       {activeTab === 'create' && !isAdmin ? (
         <div className="flex gap-6 h-full overflow-hidden">
-            {/* Create Tab Content (Unchanged layout but cleaned up) */}
+            {/* Create Tab Content */}
             <div className="w-80 flex flex-col gap-4 overflow-y-auto shrink-0">
             <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
                 <h3 className="font-bold text-gray-800 flex items-center gap-2 mb-4 text-sm uppercase">
@@ -518,31 +543,54 @@ export const OnCallSchedulePage: React.FC = () => {
                 </h3>
                 <div className="space-y-3">
                     <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1">Khoa thực tập</label>
-                    <select className="w-full p-2 border rounded-lg text-sm" value={filterDept} onChange={e => setFilterDept(e.target.value)}>
-                        {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
-                    </select>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Khoa thực tập (Khoa Lớn)</label>
+                        <select className="w-full p-2 border rounded-lg text-sm" value={filterDept} onChange={e => handleDeptChange(e.target.value)}>
+                            {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                    </div>
+                    
+                    {/* NEW: Sub-Dept Selection */}
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1 flex items-center justify-between">
+                            <span>Khoa nhỏ (Tùy chọn)</span>
+                            <span className="text-[10px] bg-gray-100 px-1 rounded font-normal text-gray-500">Lọc chi tiết</span>
+                        </label>
+                        <select 
+                            className={`w-full p-2 border rounded-lg text-sm ${filterSubDept ? 'border-teal-300 bg-teal-50' : ''}`}
+                            value={filterSubDept} 
+                            onChange={e => setFilterSubDept(e.target.value)}
+                            disabled={!filterDept || availableSubDepts.length === 0}
+                        >
+                            <option value="">-- Tất cả khoa nhỏ --</option>
+                            {availableSubDepts.map(sd => <option key={sd} value={sd}>{sd}</option>)}
+                        </select>
+                        <p className="text-[10px] text-gray-400 mt-1">
+                            {filterSubDept 
+                                ? "Đang lấy danh sách từ Phân Khoa Chi Tiết." 
+                                : "Đang lấy danh sách từ Phân Công Tổng Thể (Admin)."}
+                        </p>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Đối tượng</label>
+                        <select className="w-full p-2 border rounded-lg text-sm" value={filterMajor} onChange={e => setFilterMajor(e.target.value)}>
+                            <option value="">-- Tất cả --</option>
+                            {MAJORS.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
                     </div>
                     <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1">Đối tượng</label>
-                    <select className="w-full p-2 border rounded-lg text-sm" value={filterMajor} onChange={e => setFilterMajor(e.target.value)}>
-                        <option value="">-- Tất cả --</option>
-                        {MAJORS.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Khóa</label>
+                        <select className="w-full p-2 border rounded-lg text-sm" value={filterCourse} onChange={e => setFilterCourse(e.target.value)}>
+                            <option value="">-- Tất cả --</option>
+                            {courses.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
                     </div>
                     <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1">Khóa</label>
-                    <select className="w-full p-2 border rounded-lg text-sm" value={filterCourse} onChange={e => setFilterCourse(e.target.value)}>
-                        <option value="">-- Tất cả --</option>
-                        {courses.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                    </div>
-                    <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1">Nhóm</label>
-                    <select className="w-full p-2 border rounded-lg text-sm" value={filterGroup} onChange={e => setFilterGroup(e.target.value)}>
-                        <option value="">-- Tất cả --</option>
-                        {groups.map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Nhóm</label>
+                        <select className="w-full p-2 border rounded-lg text-sm" value={filterGroup} onChange={e => setFilterGroup(e.target.value)}>
+                            <option value="">-- Tất cả --</option>
+                            {groups.map(g => <option key={g} value={g}>{g}</option>)}
+                        </select>
                     </div>
                 </div>
             </div>
@@ -604,7 +652,12 @@ export const OnCallSchedulePage: React.FC = () => {
                         <Users size={16} className="text-gray-400"/>
                         <span className="font-bold">Danh sách Sinh viên Khả dụng ({filteredStudents.length})</span>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1 ml-6">Đang thực tập tại {filterDept} vào ngày {new Date(targetDate).toLocaleDateString('vi-VN')}</p>
+                    <p className="text-xs text-gray-500 mt-1 ml-6">
+                        {filterSubDept 
+                            ? `Tại khoa nhỏ ${filterSubDept} - ngày ${new Date(targetDate).toLocaleDateString('vi-VN')}`
+                            : `Tại khoa lớn ${filterDept} - ngày ${new Date(targetDate).toLocaleDateString('vi-VN')}`
+                        }
+                    </p>
                 </div>
                 
                 <button onClick={toggleAll} className="text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1 px-3 py-1 rounded hover:bg-indigo-50 transition">
@@ -626,13 +679,19 @@ export const OnCallSchedulePage: React.FC = () => {
                             Lý do có thể:
                         </p>
                         <ul className="text-xs text-left text-gray-500 list-disc pl-6 space-y-1">
-                            <li>Chưa có sinh viên nào được phân công thực tập tại <b>Khoa {filterDept}</b> vào ngày này.</li>
+                            {filterSubDept ? (
+                                <li>Chưa có sinh viên nào được phân vào <b>{filterSubDept}</b> trong ngày này (Tab Phân Khoa Chi Tiết).</li>
+                            ) : (
+                                <li>Chưa có sinh viên nào được phân công thực tập tại <b>Khoa {filterDept}</b> (Admin).</li>
+                            )}
                             <li>Sinh viên đã có lịch trực khác trong tuần này (đã bị ẩn).</li>
                             <li>Bộ lọc Đối tượng/Khóa/Nhóm không khớp.</li>
                         </ul>
-                        <p className="text-xs text-center mt-4 text-indigo-600">
-                           Vui lòng kiểm tra lại Tab "Kế hoạch lâm sàng" (Admin).
-                        </p>
+                        {filterSubDept && (
+                             <p className="text-xs text-center mt-4 text-orange-600">
+                                Gợi ý: Hãy thử bỏ chọn "Khoa nhỏ" để xem danh sách tổng thể.
+                             </p>
+                        )}
                     </div>
                 ) : (
                     <div className="space-y-1">

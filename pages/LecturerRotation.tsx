@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { AssignmentService, StudentService, RotationService, LecturerService } from '../services/db';
 import { Assignment, Student, ClinicalRotation, DEPARTMENTS, SUB_DEPARTMENTS, Role } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { CheckSquare, Square, Plus, Trash2, Network, ArrowRight, Calendar, Users, MapPin, AlertTriangle, Search, RotateCcw } from 'lucide-react';
+import { CheckSquare, Square, Plus, Trash2, Network, ArrowRight, Calendar, Users, MapPin, AlertTriangle, Search, RotateCcw, Info } from 'lucide-react';
 
 export const LecturerRotationPage: React.FC = () => {
   const { user } = useAuth();
@@ -95,21 +95,46 @@ export const LecturerRotationPage: React.FC = () => {
 
   // --- LECTURER VIEW LOGIC ---
 
-  // 1. Get list of students assigned to the Main Dept (by Admin)
+  // Calculate Available Students based on Main Dept AND Time Conflicts
   const availableStudents = useMemo(() => {
       if (!selectedMainDept) return [];
 
-      // Find all Admin assignments for this Main Dept
-      // Optional: filter by date overlap if startDate/endDate is set, but for now just show all
-      const relevantAssignments = assignments.filter(a => a.department === selectedMainDept);
-      
+      // 1. Get assignments for Main Dept (Admin's Plan)
+      let relevantAssignments = assignments.filter(a => a.department === selectedMainDept);
+
+      // CRITICAL UPDATE: Filter Admin Assignments by DATE OVERLAP
+      // Chỉ lấy những sinh viên có lịch đi Khoa Lớn trùng với thời gian đang chọn phân khoa nhỏ
+      if (startDate && endDate) {
+          relevantAssignments = relevantAssignments.filter(a => {
+              // Overlap logic: (StartA <= EndB) and (EndA >= StartB)
+              // Thời gian Admin phân công phải bao trùm hoặc giao nhau với thời gian Gv chọn
+              return a.startDate <= endDate && a.endDate >= startDate;
+          });
+      }
+
       const validStudentIds = new Set<string>();
       relevantAssignments.forEach(a => {
           a.studentIds.forEach(id => validStudentIds.add(id));
       });
 
+      // 2. Filter out students who are BUSY in another sub-dept during the selected timeframe
+      if (startDate && endDate) {
+          const busyIds = new Set<string>();
+          
+          rotations.forEach(r => {
+              // Check Date Overlap with existing sub-dept rotations
+              if (r.startDate <= endDate && r.endDate >= startDate) {
+                  busyIds.add(r.studentId);
+              }
+          });
+
+          // Return students who are VALID (assigned by Admin in this time) AND NOT BUSY (no other sub-dept)
+          return students.filter(s => validStudentIds.has(s.id) && !busyIds.has(s.id));
+      }
+
+      // If no dates selected, show all valid students assigned to this main dept (fallback)
       return students.filter(s => validStudentIds.has(s.id));
-  }, [selectedMainDept, assignments, students]);
+  }, [selectedMainDept, assignments, students, rotations, startDate, endDate]);
 
   // 3. Get Existing Rotations for current view (to show in list)
   const currentRotations = useMemo(() => {
@@ -187,9 +212,9 @@ export const LecturerRotationPage: React.FC = () => {
       <div className="h-full flex flex-col animate-in fade-in">
           <div className="mb-6">
               <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-                  <Calendar className="text-teal-600" /> Xem Lịch Phân Công
+                  <Network className="text-teal-600" /> Tra Cứu Phân Khoa Chi Tiết
               </h1>
-              <p className="text-sm text-gray-500">Xem lịch đi các khoa lẻ / phòng bệnh chi tiết (do Giảng viên phân công)</p>
+              <p className="text-sm text-gray-500">Xem lịch đi các khoa lẻ / phòng bệnh chi tiết</p>
           </div>
 
           {/* SEARCH CARD */}
@@ -380,6 +405,10 @@ export const LecturerRotationPage: React.FC = () => {
                                 <input type="date" className="w-full p-2 border rounded-lg text-sm" value={endDate} onChange={e => setEndDate(e.target.value)}/>
                             </div>
                         </div>
+                        <div className="bg-blue-50 p-2 rounded text-xs text-blue-700 flex items-start gap-2">
+                            <Info size={14} className="shrink-0 mt-0.5"/>
+                            <span>Hệ thống sẽ tự động lọc sinh viên được Admin phân về Khoa Lớn trong khoảng thời gian này.</span>
+                        </div>
                     </div>
                 </div>
 
@@ -395,7 +424,7 @@ export const LecturerRotationPage: React.FC = () => {
                      <div className="flex-1 overflow-y-auto p-2">
                         {availableStudents.length === 0 ? (
                             <div className="text-center p-6 text-gray-400 text-sm italic">
-                                {selectedMainDept ? 'Không có sinh viên nào được Admin phân công về khoa này.' : 'Vui lòng chọn Khoa Lớn.'}
+                                {!selectedMainDept ? 'Vui lòng chọn Khoa Lớn.' : (!startDate || !endDate) ? 'Vui lòng chọn thời gian để tải danh sách.' : 'Không có sinh viên nào được Admin phân công trong thời gian này.'}
                             </div>
                         ) : (
                             availableStudents.map(s => (
