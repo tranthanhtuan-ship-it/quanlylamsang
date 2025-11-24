@@ -1,8 +1,8 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { AssignmentService, StudentService } from '../services/db';
-import { Assignment, Student, DEPARTMENTS, MAJORS } from '../types';
-import { Plus, Trash2, Calendar as CalendarIcon, Users, CheckSquare, Square, ArrowRight, MapPin, ClipboardCheck, AlertTriangle, List, BarChart2, Search } from 'lucide-react';
+import { Assignment, Student, DEPARTMENTS, MAJORS, SUB_DEPARTMENTS } from '../types';
+import { Plus, Trash2, Calendar as CalendarIcon, Users, CheckSquare, Square, ArrowRight, MapPin, ClipboardCheck, AlertTriangle, List, BarChart2, Search, Network } from 'lucide-react';
 
 export const ClinicalAssignments: React.FC = () => {
   // --- TAB STATE ---
@@ -10,6 +10,8 @@ export const ClinicalAssignments: React.FC = () => {
 
   // --- PLANNING TAB STATE ---
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
+  const [selectedSubDept, setSelectedSubDept] = useState<string>(''); // NEW
+  
   const [filterMajor, setFilterMajor] = useState<string>('');
   const [filterCourse, setFilterCourse] = useState<string>('');
   const [filterGroup, setFilterGroup] = useState<string>('');
@@ -50,6 +52,10 @@ export const ClinicalAssignments: React.FC = () => {
   
   const courses = useMemo(() => [...new Set(students.map(s => s.course))].sort(), [students]);
   const groups = useMemo(() => [...new Set(students.map(s => s.group))].sort(), [students]);
+  
+  const availableSubDepts = useMemo(() => {
+      return selectedDept ? (SUB_DEPARTMENTS[selectedDept] || []) : [];
+  }, [selectedDept]);
 
   const filteredStudentsForAssignment = useMemo(() => {
     return students.filter(s => {
@@ -100,6 +106,11 @@ export const ClinicalAssignments: React.FC = () => {
 
   // --- HANDLERS ---
 
+  const handleDeptSelection = (dept: string) => {
+      setSelectedDept(dept);
+      setSelectedSubDept(''); // Reset sub-dept when main dept changes
+  };
+
   const toggleStudent = (id: string) => {
     const newSet = new Set(selectedStudentIds);
     if (newSet.has(id)) newSet.delete(id);
@@ -123,16 +134,55 @@ export const ClinicalAssignments: React.FC = () => {
     if (!selectedDept) return alert("Vui lòng chọn Khoa lâm sàng.");
     if (selectedStudentIds.size === 0) return alert("Vui lòng chọn ít nhất một sinh viên.");
     if (!startDate || !endDate) return alert("Vui lòng chọn thời gian bắt đầu và kết thúc.");
+    if (startDate > endDate) return alert("Ngày kết thúc phải sau ngày bắt đầu.");
 
     const ids: string[] = Array.from(selectedStudentIds);
+
+    // --- VALIDATION LOGIC: CHECK FOR OVERLAPS ---
+    const conflicts: string[] = [];
     
+    ids.forEach(studentId => {
+        const student = students.find(s => s.id === studentId);
+        if (!student) return;
+
+        // Check against existing assignments for this student
+        const conflictingAssignment = assignments.find(a => {
+            if (!a.studentIds.includes(studentId)) return false;
+            
+            // Check overlap: (StartA <= EndB) and (EndA >= StartB)
+            const isOverlap = (startDate <= a.endDate) && (endDate >= a.startDate);
+            return isOverlap;
+        });
+
+        if (conflictingAssignment) {
+            conflicts.push(
+                `- ${student.fullName} (${student.studentCode}): Đang ở Khoa ${conflictingAssignment.department} (${conflictingAssignment.startDate} -> ${conflictingAssignment.endDate})`
+            );
+        }
+    });
+
+    if (conflicts.length > 0) {
+        alert(
+            `KHÔNG THỂ PHÂN CÔNG!\nPhát hiện ${conflicts.length} sinh viên bị trùng lịch thực tập trong khoảng thời gian này:\n\n` + 
+            conflicts.slice(0, 10).join("\n") + 
+            (conflicts.length > 10 ? `\n... và ${conflicts.length - 10} sinh viên khác.` : "")
+        );
+        return; // Stop execution
+    }
+    // --- END VALIDATION ---
+    
+    const assignmentName = selectedSubDept 
+        ? `${filterGroup || 'Nhóm'} - ${selectedSubDept}`
+        : `${filterGroup || 'Nhóm'} - ${selectedDept}`;
+
     const newAssignment: Assignment = {
       id: Date.now().toString(),
       department: selectedDept,
+      subDepartment: selectedSubDept || undefined, // Save Sub-dept if selected
       startDate,
       endDate,
       studentIds: ids,
-      name: `${filterGroup || 'Nhóm'} - ${filterMajor || 'SV'} - ${selectedDept}`
+      name: assignmentName
     };
 
     await AssignmentService.save(newAssignment);
@@ -140,7 +190,12 @@ export const ClinicalAssignments: React.FC = () => {
     const newAssignments = await AssignmentService.getAll();
     setAssignments(newAssignments);
     setSelectedStudentIds(new Set());
-    alert(`Đã phân công ${ids.length} sinh viên vào khoa ${selectedDept} thành công!`);
+    
+    const successMsg = selectedSubDept 
+        ? `Đã phân công ${ids.length} sinh viên vào ${selectedSubDept} (thuộc khoa ${selectedDept}) thành công!`
+        : `Đã phân công ${ids.length} sinh viên vào khoa ${selectedDept} thành công!`;
+    
+    alert(successMsg);
   };
 
   const openDeleteModal = (e: React.MouseEvent, assignment: Assignment) => {
@@ -201,7 +256,7 @@ export const ClinicalAssignments: React.FC = () => {
                 {DEPARTMENTS.map(dept => (
                   <button
                     key={dept}
-                    onClick={() => setSelectedDept(dept)}
+                    onClick={() => handleDeptSelection(dept)}
                     className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors flex justify-between items-center
                       ${selectedDept === dept ? 'bg-teal-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-teal-700'}
                     `}
@@ -236,6 +291,29 @@ export const ClinicalAssignments: React.FC = () => {
                                 <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded font-medium">Bước 1: Lọc sinh viên &rarr; Bước 2: Chọn ngày &rarr; Bước 3: Thực hiện</span>
                             </div>
                             
+                            {/* NEW: Sub-Department Selection (Especially for Chuyên khoa lẻ) */}
+                            {availableSubDepts.length > 0 && (
+                                <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-lg flex items-center gap-4">
+                                    <div className="flex items-center gap-2 text-blue-800 font-bold text-sm">
+                                        <Network size={18}/>
+                                        Khoa nhỏ (Tùy chọn):
+                                    </div>
+                                    <select 
+                                        className="flex-1 p-2 border border-blue-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500"
+                                        value={selectedSubDept}
+                                        onChange={(e) => setSelectedSubDept(e.target.value)}
+                                    >
+                                        <option value="">-- Chung / Không chọn --</option>
+                                        {availableSubDepts.map(sub => (
+                                            <option key={sub} value={sub}>{sub}</option>
+                                        ))}
+                                    </select>
+                                    <div className="text-xs text-blue-600 italic">
+                                        * Chọn để phân công cụ thể ngay (thay vì chỉ phân về khoa lớn).
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
                                 {/* Filters */}
                                 <div className="lg:col-span-7 grid grid-cols-3 gap-3">
@@ -349,8 +427,14 @@ export const ClinicalAssignments: React.FC = () => {
                                                 </button>
                                                 
                                                 <div className="mb-2">
-                                                    <h4 className="font-bold text-gray-800 text-sm">{assign.name}</h4>
-                                                    <p className="text-xs text-gray-500">ID: {assign.id.slice(-6)}</p>
+                                                    <h4 className="font-bold text-gray-800 text-sm flex items-center gap-2">
+                                                        {assign.name}
+                                                    </h4>
+                                                    {assign.subDepartment && (
+                                                        <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-100 font-medium mt-1 inline-block">
+                                                            {assign.subDepartment}
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 
                                                 <div className="space-y-1.5">
@@ -441,8 +525,8 @@ export const ClinicalAssignments: React.FC = () => {
                                                   <th className="px-6 py-3 w-12">#</th>
                                                   <th className="px-6 py-3">Họ và tên</th>
                                                   <th className="px-6 py-3">Mã SV</th>
-                                                  <th className="px-6 py-3">Lớp</th>
-                                                  <th className="px-6 py-3">Nhóm</th>
+                                                  <th className="px-6 py-3">Lớp / Nhóm</th>
+                                                  <th className="px-6 py-3">Khoa nhỏ / Phân loại</th>
                                                   <th className="px-6 py-3">Thời gian thực tập</th>
                                               </tr>
                                           </thead>
@@ -453,9 +537,18 @@ export const ClinicalAssignments: React.FC = () => {
                                                           <td className="px-6 py-3 text-gray-400">{sIdx + 1}</td>
                                                           <td className="px-6 py-3 font-bold text-gray-800">{student.fullName}</td>
                                                           <td className="px-6 py-3">{student.studentCode}</td>
-                                                          <td className="px-6 py-3">{student.classId}</td>
                                                           <td className="px-6 py-3">
-                                                              <span className="bg-gray-100 px-2 py-1 rounded text-xs">{student.group}</span>
+                                                              {student.classId} 
+                                                              <span className="text-xs bg-gray-100 px-1.5 py-0.5 rounded ml-1">{student.group}</span>
+                                                          </td>
+                                                          <td className="px-6 py-3">
+                                                              {group.assignment.subDepartment ? (
+                                                                  <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs font-medium border border-blue-100">
+                                                                      {group.assignment.subDepartment}
+                                                                  </span>
+                                                              ) : (
+                                                                  <span className="text-gray-400 italic text-xs">Chung</span>
+                                                              )}
                                                           </td>
                                                           <td className="px-6 py-3">
                                                               <div className="flex items-center gap-2 text-indigo-600 bg-indigo-50 w-fit px-2 py-1 rounded text-xs font-medium">

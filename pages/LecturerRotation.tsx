@@ -3,10 +3,10 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { AssignmentService, StudentService, RotationService, LecturerService } from '../services/db';
 import { Assignment, Student, ClinicalRotation, DEPARTMENTS, SUB_DEPARTMENTS, Role } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { CheckSquare, Square, Plus, Trash2, Network, ArrowRight, Calendar, Users, MapPin, AlertTriangle, Search, RotateCcw, Info } from 'lucide-react';
+import { CheckSquare, Square, Plus, Trash2, Network, ArrowRight, Calendar, Users, MapPin, AlertTriangle, Search, RotateCcw, ShieldCheck } from 'lucide-react';
 
 export const LecturerRotationPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, selectedDepartment } = useAuth();
   const isStudent = user?.role === Role.STUDENT;
   const [loading, setLoading] = useState(true);
 
@@ -49,12 +49,13 @@ export const LecturerRotationPage: React.FC = () => {
     setAssignments(aData);
     setRotations(rData);
 
-    // Auto-select department if lecturer
-    if (user?.role === 'lecturer' && user.relatedId) {
+    // AUTO-SELECT DEPT FROM CONTEXT
+    if (selectedDepartment) {
+        setSelectedMainDept(selectedDepartment);
+    } else if (user?.role === 'lecturer' && user.relatedId) {
+        // Fallback to lecturer profile dept
         const lecturer = lData.find(l => l.id === user.relatedId);
-        if (lecturer) {
-            setSelectedMainDept(lecturer.department);
-        }
+        if (lecturer) setSelectedMainDept(lecturer.department);
     }
 
     setLoading(false);
@@ -85,12 +86,30 @@ export const LecturerRotationPage: React.FC = () => {
     setHasSearched(false);
   };
 
+  // Combine Rotations from DB and Admin Assignments for the student view
   const studentRotations = useMemo(() => {
       if (!foundStudent) return [];
-      return rotations
-        .filter(r => r.studentId === foundStudent.id)
-        .sort((a, b) => a.startDate.localeCompare(b.startDate));
-  }, [rotations, foundStudent]);
+      
+      // 1. Manual Rotations
+      const manual = rotations.filter(r => r.studentId === foundStudent.id);
+
+      // 2. Admin Assignments converted to Rotations (if they have subDept)
+      const adminDerived: ClinicalRotation[] = [];
+      assignments.forEach(a => {
+          if (a.subDepartment && a.studentIds.includes(foundStudent.id)) {
+              adminDerived.push({
+                  id: `ADMIN_${a.id}`,
+                  mainDepartment: a.department,
+                  subDepartment: a.subDepartment,
+                  studentId: foundStudent.id,
+                  startDate: a.startDate,
+                  endDate: a.endDate
+              });
+          }
+      });
+
+      return [...manual, ...adminDerived].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  }, [rotations, assignments, foundStudent]);
 
 
   // --- LECTURER VIEW LOGIC ---
@@ -102,44 +121,60 @@ export const LecturerRotationPage: React.FC = () => {
       // 1. Get assignments for Main Dept (Admin's Plan)
       let relevantAssignments = assignments.filter(a => a.department === selectedMainDept);
 
-      // CRITICAL UPDATE: Filter Admin Assignments by DATE OVERLAP
-      // Chỉ lấy những sinh viên có lịch đi Khoa Lớn trùng với thời gian đang chọn phân khoa nhỏ
+      // Filter by DATE OVERLAP if set
       if (startDate && endDate) {
           relevantAssignments = relevantAssignments.filter(a => {
-              // Overlap logic: (StartA <= EndB) and (EndA >= StartB)
-              // Thời gian Admin phân công phải bao trùm hoặc giao nhau với thời gian Gv chọn
               return a.startDate <= endDate && a.endDate >= startDate;
           });
       }
 
       const validStudentIds = new Set<string>();
       relevantAssignments.forEach(a => {
-          a.studentIds.forEach(id => validStudentIds.add(id));
+          // EXCLUDE students who already have a subDepartment assigned by Admin
+          // because they shouldn't be re-assigned manually here.
+          if (!a.subDepartment) { 
+             a.studentIds.forEach(id => validStudentIds.add(id));
+          }
       });
 
-      // 2. Filter out students who are BUSY in another sub-dept during the selected timeframe
+      // 2. Filter out students who are BUSY in another sub-dept (Manual Rotation)
       if (startDate && endDate) {
           const busyIds = new Set<string>();
-          
           rotations.forEach(r => {
-              // Check Date Overlap with existing sub-dept rotations
               if (r.startDate <= endDate && r.endDate >= startDate) {
                   busyIds.add(r.studentId);
               }
           });
-
-          // Return students who are VALID (assigned by Admin in this time) AND NOT BUSY (no other sub-dept)
           return students.filter(s => validStudentIds.has(s.id) && !busyIds.has(s.id));
       }
 
-      // If no dates selected, show all valid students assigned to this main dept (fallback)
       return students.filter(s => validStudentIds.has(s.id));
   }, [selectedMainDept, assignments, students, rotations, startDate, endDate]);
 
-  // 3. Get Existing Rotations for current view (to show in list)
+  // 3. Get Combined Rotations (Manual + Admin)
   const currentRotations = useMemo(() => {
-      return rotations.filter(r => r.mainDepartment === selectedMainDept);
-  }, [rotations, selectedMainDept]);
+      // A. Manual Rotations (Lecturer created)
+      const manual = rotations.filter(r => r.mainDepartment === selectedMainDept);
+
+      // B. Admin Assignments (Where Admin already set the sub-department)
+      const adminDerived: ClinicalRotation[] = [];
+      assignments.forEach(a => {
+          if (a.department === selectedMainDept && a.subDepartment) {
+              a.studentIds.forEach(sid => {
+                  adminDerived.push({
+                      id: `ADMIN_ASSIGN_${a.id}_${sid}`, // Synthetic ID to identify source
+                      mainDepartment: a.department,
+                      subDepartment: a.subDepartment!,
+                      studentId: sid,
+                      startDate: a.startDate,
+                      endDate: a.endDate
+                  });
+              });
+          }
+      });
+
+      return [...manual, ...adminDerived];
+  }, [rotations, assignments, selectedMainDept]);
 
   // --- HANDLERS ---
 
@@ -302,6 +337,7 @@ export const LecturerRotationPage: React.FC = () => {
                                           const now = new Date().toISOString().split('T')[0];
                                           let status = 'Sắp tới';
                                           let statusColor = 'bg-gray-100 text-gray-600';
+                                          const isAdminAssigned = rot.id.startsWith('ADMIN');
 
                                           if (rot.startDate <= now && rot.endDate >= now) {
                                               status = 'Đang diễn ra';
@@ -315,9 +351,12 @@ export const LecturerRotationPage: React.FC = () => {
                                               <tr key={rot.id} className="hover:bg-gray-50">
                                                   <td className="px-6 py-4 font-bold text-gray-800">{rot.mainDepartment}</td>
                                                   <td className="px-6 py-4">
-                                                      <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-medium border border-indigo-100">
-                                                          {rot.subDepartment}
-                                                      </span>
+                                                      <div className="flex items-center gap-2">
+                                                          <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-medium border border-indigo-100">
+                                                              {rot.subDepartment}
+                                                          </span>
+                                                          {isAdminAssigned && <ShieldCheck size={14} className="text-teal-500" title="Do Admin phân công"/>}
+                                                      </div>
                                                   </td>
                                                   <td className="px-6 py-4">
                                                       <div className="flex items-center gap-2">
@@ -369,9 +408,10 @@ export const LecturerRotationPage: React.FC = () => {
                         <div>
                             <label className="block text-xs font-bold text-gray-500 mb-1">Khoa Lớn (Đã được Admin phân)</label>
                             <select 
-                                className="w-full p-2 border rounded-lg text-sm focus:ring-2 focus:ring-teal-500"
+                                className={`w-full p-2 border rounded-lg text-sm focus:ring-2 focus:ring-teal-500 ${selectedDepartment ? 'bg-gray-100 text-gray-600 cursor-not-allowed' : ''}`}
                                 value={selectedMainDept}
                                 onChange={e => handleMainDeptChange(e.target.value)}
+                                disabled={!!selectedDepartment}
                             >
                                 <option value="">-- Chọn Khoa Lớn --</option>
                                 {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
@@ -405,10 +445,6 @@ export const LecturerRotationPage: React.FC = () => {
                                 <input type="date" className="w-full p-2 border rounded-lg text-sm" value={endDate} onChange={e => setEndDate(e.target.value)}/>
                             </div>
                         </div>
-                        <div className="bg-blue-50 p-2 rounded text-xs text-blue-700 flex items-start gap-2">
-                            <Info size={14} className="shrink-0 mt-0.5"/>
-                            <span>Hệ thống sẽ tự động lọc sinh viên được Admin phân về Khoa Lớn trong khoảng thời gian này.</span>
-                        </div>
                     </div>
                 </div>
 
@@ -424,7 +460,9 @@ export const LecturerRotationPage: React.FC = () => {
                      <div className="flex-1 overflow-y-auto p-2">
                         {availableStudents.length === 0 ? (
                             <div className="text-center p-6 text-gray-400 text-sm italic">
-                                {!selectedMainDept ? 'Vui lòng chọn Khoa Lớn.' : (!startDate || !endDate) ? 'Vui lòng chọn thời gian để tải danh sách.' : 'Không có sinh viên nào được Admin phân công trong thời gian này.'}
+                                {selectedMainDept 
+                                    ? 'Không có sinh viên mới nào. Tất cả đã được phân công.' 
+                                    : 'Vui lòng chọn Khoa Lớn.'}
                             </div>
                         ) : (
                             availableStudents.map(s => (
@@ -491,16 +529,24 @@ export const LecturerRotationPage: React.FC = () => {
                             ) : (
                                 currentRotations.map(rot => {
                                     const student = students.find(s => s.id === rot.studentId);
+                                    const isAdminAssigned = rot.id.startsWith('ADMIN_ASSIGN_');
+
                                     return (
-                                        <tr key={rot.id} className="hover:bg-gray-50 transition">
+                                        <tr key={rot.id} className={`hover:bg-gray-50 transition ${isAdminAssigned ? 'bg-teal-50/20' : ''}`}>
                                             <td className="px-6 py-4">
-                                                <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded font-medium border border-blue-100">
+                                                <span className={`px-2 py-1 rounded font-medium border 
+                                                    ${isAdminAssigned ? 'bg-teal-50 text-teal-700 border-teal-100' : 'bg-blue-50 text-blue-700 border-blue-100'}
+                                                `}>
                                                     {rot.subDepartment}
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4">
-                                                <div className="font-bold text-gray-800">{student?.fullName || 'Unknown'}</div>
-                                                <div className="text-xs text-gray-500">{student?.studentCode}</div>
+                                                <div className="flex items-center gap-2">
+                                                    <div>
+                                                        <div className="font-bold text-gray-800">{student?.fullName || 'Unknown'}</div>
+                                                        <div className="text-xs text-gray-500">{student?.studentCode}</div>
+                                                    </div>
+                                                </div>
                                             </td>
                                             <td className="px-6 py-4 text-xs">
                                                 {student?.classId} - {student?.group}
@@ -511,12 +557,18 @@ export const LecturerRotationPage: React.FC = () => {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 text-right">
-                                                <button 
-                                                    onClick={() => setDeleteModal({isOpen: true, rotationId: rot.id})}
-                                                    className="text-red-400 hover:text-red-600 p-1.5 rounded hover:bg-red-50 transition"
-                                                >
-                                                    <Trash2 size={16}/>
-                                                </button>
+                                                {isAdminAssigned ? (
+                                                    <span title="Được phân công bởi Admin" className="text-teal-500 cursor-help inline-flex items-center justify-center p-1.5">
+                                                        <ShieldCheck size={18}/>
+                                                    </span>
+                                                ) : (
+                                                    <button 
+                                                        onClick={() => setDeleteModal({isOpen: true, rotationId: rot.id})}
+                                                        className="text-red-400 hover:text-red-600 p-1.5 rounded hover:bg-red-50 transition"
+                                                    >
+                                                        <Trash2 size={16}/>
+                                                    </button>
+                                                )}
                                             </td>
                                         </tr>
                                     );

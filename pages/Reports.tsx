@@ -1,12 +1,12 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { StudentService, ReportService, LecturerService, AssignmentService, TeachingPlanService } from '../services/db';
-import { Student, ClinicalReport, Lecturer, DEPARTMENTS, ReportLecturerActivity, Assignment, StudentAbsenceRecord, TeachingPlan, Role } from '../types';
-import { FileText, CheckCircle, Plus, Trash2, Calendar, Users, ChevronDown, ChevronUp, X, ListFilter } from 'lucide-react';
+import { StudentService, ReportService, LecturerService, AssignmentService, TeachingPlanService, RotationService } from '../services/db';
+import { Student, ClinicalReport, Lecturer, DEPARTMENTS, SUB_DEPARTMENTS, ReportLecturerActivity, Assignment, StudentAbsenceRecord, TeachingPlan, Role, ClinicalRotation } from '../types';
+import { FileText, CheckCircle, Plus, Trash2, Calendar, Users, ChevronDown, ChevronUp, X, ListFilter, Network } from 'lucide-react';
 
 export const Reports: React.FC = () => {
-  const { user } = useAuth();
+  const { user, selectedDepartment } = useAuth();
   const isAdmin = user?.role === Role.ADMIN;
   
   const [activeTab, setActiveTab] = useState<'list' | 'create'>('list');
@@ -18,16 +18,29 @@ export const Reports: React.FC = () => {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [reports, setReports] = useState<ClinicalReport[]>([]);
   const [teachingPlans, setTeachingPlans] = useState<TeachingPlan[]>([]);
+  const [manualRotations, setManualRotations] = useState<ClinicalRotation[]>([]); // Renamed to distinguish source
+
+  // Date helpers for default values
+  const getMonday = (d: Date) => {
+    const day = d.getDay(),
+      diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(d.setDate(diff));
+  };
+  const today = new Date();
+  const monday = getMonday(new Date(today));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
 
   // Form State
   const [selectedDept, setSelectedDept] = useState<string>('');
+  const [selectedSubDept, setSelectedSubDept] = useState<string>(''); 
   const [lecturerCount, setLecturerCount] = useState<number>(0);
   
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     weekNumber: 1,
-    startDate: '',
-    endDate: '',
+    startDate: monday.toISOString().split('T')[0], // Default to current week
+    endDate: sunday.toISOString().split('T')[0],   // Default to current week
     classFeedback: '',
     skillFeedback: '',
     absentStudents: [] as StudentAbsenceRecord[],
@@ -47,28 +60,69 @@ export const Reports: React.FC = () => {
 
   useEffect(() => {
     const load = async () => {
-        const [s, l, a, r, tp] = await Promise.all([
+        const [s, l, a, r, tp, rot] = await Promise.all([
             StudentService.getAll(),
             LecturerService.getAll(),
             AssignmentService.getAll(),
             ReportService.getAll(),
-            TeachingPlanService.getAll()
+            TeachingPlanService.getAll(),
+            RotationService.getAll()
         ]);
         setStudents(s);
         setLecturers(l);
         setAssignments(a);
         setReports(r);
         setTeachingPlans(tp);
+        setManualRotations(rot);
     };
     load();
   }, []);
+
+  // Auto-Select Department
+  useEffect(() => {
+      if (selectedDepartment) setSelectedDept(selectedDepartment);
+  }, [selectedDepartment]);
+
+  // --- DERIVED DATA ---
+
+  // Combine Manual Rotations with Admin Assignments (that have specific sub-depts)
+  // This ensures "Khoa đang thực tập" reflects exactly what is in "Phân khoa chi tiết"
+  const allCombinedRotations = useMemo(() => {
+      // 1. Start with manual rotations (from LecturerRotationPage)
+      const combined = [...manualRotations];
+
+      // 2. Add Admin Assignments that have specific sub-departments
+      assignments.forEach(a => {
+          if (a.subDepartment) {
+              a.studentIds.forEach(sid => {
+                  combined.push({
+                      id: `ADMIN_ASSIGN_${a.id}_${sid}`, // unique synthetic id
+                      mainDepartment: a.department,
+                      subDepartment: a.subDepartment!,
+                      studentId: sid,
+                      startDate: a.startDate,
+                      endDate: a.endDate
+                  });
+              });
+          }
+      });
+      return combined;
+  }, [manualRotations, assignments]);
 
   // --- FILTER LOGIC ---
 
   // 1. Filter Lecturers by selected Department
   const availableLecturers = useMemo(() => {
       if (!selectedDept) return [];
-      return lecturers.filter(l => l.department === selectedDept);
+      // For Chuyên khoa lẻ, show all lecturers or filter loosely if needed. 
+      // Generally for reporting we allow picking any lecturer, but default filter helps.
+      return lecturers.filter(l => {
+          if (selectedDept === 'Chuyên khoa lẻ') {
+             // For CK Lẻ, show everyone or try to match specific logic. 
+             return true; 
+          }
+          return l.department === selectedDept;
+      });
   }, [lecturers, selectedDept]);
 
   // 2. Filter Students currently assigned to the selected Department
@@ -88,11 +142,14 @@ export const Reports: React.FC = () => {
     const cohorts = new Set<string>();
     availableStudents.forEach(s => {
         // Format: Major - Course (Group)
-        // Example: Y sỹ đa khoa - K46 (Nhóm 1)
         cohorts.add(`${s.major} - ${s.course} (${s.group})`);
     });
     return Array.from(cohorts).sort();
   }, [availableStudents]);
+
+  const availableSubDepts = useMemo(() => {
+      return selectedDept ? (SUB_DEPARTMENTS[selectedDept] || []) : [];
+  }, [selectedDept]);
 
 
   // --- AUTO-CALCULATION LOGIC ---
@@ -134,6 +191,7 @@ export const Reports: React.FC = () => {
               currentActivities.push({
                   lecturerId: '',
                   lecturerName: '',
+                  lecturerDepartment: '',
                   clinicalSessions: 0,
                   theorySessions: 0,
                   targetAudience: ''
@@ -154,6 +212,9 @@ export const Reports: React.FC = () => {
           const selectedLec = lecturers.find(l => l.id === value);
           newActivities[index].lecturerName = selectedLec ? selectedLec.fullName : '';
           newActivities[index].lecturerId = value;
+          
+          // Auto-fill Department for CKL report
+          newActivities[index].lecturerDepartment = selectedLec ? selectedLec.department : '';
           
           // Auto-calc theory sessions if dates are present
           if (formData.startDate && formData.endDate) {
@@ -229,6 +290,24 @@ export const Reports: React.FC = () => {
       return record ? record.sessionCount : '';
   };
 
+  // Helper to find student's current sub-dept rotation
+  // UPDATED: Uses allCombinedRotations to support both Manual & Admin-assigned sub-depts
+  const getStudentCurrentSubDept = (studentId: string) => {
+      // Fallback to today if dates are missing in form (e.g. on initial render)
+      const start = formData.startDate || new Date().toISOString().split('T')[0];
+      const end = formData.endDate || new Date().toISOString().split('T')[0];
+
+      // Find rotation that overlaps with report dates
+      const rot = allCombinedRotations.find(r => 
+        r.studentId === studentId && 
+        r.mainDepartment === selectedDept &&
+        // Check overlap: (StartA <= EndB) and (EndA >= StartB)
+        (r.startDate <= end && r.endDate >= start)
+      );
+      
+      return rot ? rot.subDepartment : null;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!user) return;
@@ -238,6 +317,7 @@ export const Reports: React.FC = () => {
           id: '', // filled by service
           lecturerId: user.id,
           department: selectedDept,
+          subDepartment: selectedSubDept, // Might be empty if reporting for all CKL
           ...formData
       };
       
@@ -249,23 +329,30 @@ export const Reports: React.FC = () => {
       setReports(r);
       setActiveTab('list');
       
-      // Reset form
+      // Reset form (keep dates current)
+      const today = new Date();
+      const mon = getMonday(new Date(today));
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate() + 6);
+
       setFormData({
         date: new Date().toISOString().split('T')[0],
         weekNumber: 1,
-        startDate: '',
-        endDate: '',
+        startDate: mon.toISOString().split('T')[0],
+        endDate: sun.toISOString().split('T')[0],
         classFeedback: '',
         skillFeedback: '',
         absentStudents: [],
         lecturerActivities: []
       });
       setLecturerCount(0);
-      setSelectedDept('');
+      setSelectedSubDept('');
+      if (!selectedDepartment) setSelectedDept('');
   };
 
   return (
     <div className="animate-in fade-in">
+      {/* ... (Header Section Unchanged) ... */}
       <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-gray-800">Báo cáo Lâm sàng</h1>
           <div className="bg-white p-1 rounded-lg shadow-sm border border-gray-200">
@@ -300,19 +387,37 @@ export const Reports: React.FC = () => {
                               <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Khoa thực tập</label>
                               <select 
                                 required
-                                className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 bg-white font-medium" 
+                                className={`w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 font-medium ${selectedDepartment ? 'bg-gray-100' : 'bg-white'}`}
                                 value={selectedDept} 
                                 onChange={e => {
                                     setSelectedDept(e.target.value);
-                                    // Reset lists dependent on dept
+                                    setSelectedSubDept('');
                                     setFormData(prev => ({ ...prev, absentStudents: [], lecturerActivities: [] }));
                                     setLecturerCount(0);
                                 }}
+                                disabled={!!selectedDepartment}
                               >
                                   <option value="">-- Chọn Khoa --</option>
                                   {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
                               </select>
                           </div>
+                          
+                          {/* NEW: Sub Department Selection */}
+                          <div className="col-span-1">
+                              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Khoa nhỏ (Tùy chọn)</label>
+                              <select 
+                                className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 font-medium bg-white"
+                                value={selectedSubDept} 
+                                onChange={e => setSelectedSubDept(e.target.value)}
+                                disabled={!selectedDept || availableSubDepts.length === 0}
+                              >
+                                  <option value="">
+                                      {selectedDept === 'Chuyên khoa lẻ' ? '-- Tổng hợp / Nhiều khoa --' : '-- Chung / Không có --'}
+                                  </option>
+                                  {availableSubDepts.map(d => <option key={d} value={d}>{d}</option>)}
+                              </select>
+                          </div>
+
                           <div>
                               <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Ngày báo cáo</label>
                               <input type="date" required className="w-full p-2.5 border border-gray-300 rounded-lg" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})}/>
@@ -357,9 +462,9 @@ export const Reports: React.FC = () => {
                                   <thead className="bg-indigo-50 text-indigo-800 font-semibold text-xs uppercase">
                                       <tr>
                                           <th className="p-3 w-10 text-center">#</th>
-                                          <th className="p-3 w-1/4">Họ và tên giảng viên</th>
+                                          <th className="p-3 w-1/3">Họ và tên giảng viên</th>
                                           <th className="p-3 text-center">Số buổi LS</th>
-                                          <th className="p-3 text-center">Số buổi Lý thuyết</th>
+                                          <th className="p-3 text-center">Số buổi LT</th>
                                           <th className="p-3">Đối tượng lên lớp</th>
                                       </tr>
                                   </thead>
@@ -368,17 +473,24 @@ export const Reports: React.FC = () => {
                                           <tr key={idx} className="bg-white hover:bg-gray-50">
                                               <td className="p-3 text-center text-gray-500">{idx + 1}</td>
                                               <td className="p-3">
-                                                  <select 
-                                                    required
-                                                    className="w-full p-2 border border-gray-200 rounded focus:border-indigo-500"
-                                                    value={act.lecturerId}
-                                                    onChange={(e) => updateLecturerRow(idx, 'lecturerId', e.target.value)}
-                                                  >
-                                                      <option value="">-- Chọn Giảng viên --</option>
-                                                      {availableLecturers.map(l => (
-                                                          <option key={l.id} value={l.id}>{l.fullName}</option>
-                                                      ))}
-                                                  </select>
+                                                  <div className="flex items-center gap-2">
+                                                    <select 
+                                                        required
+                                                        className="w-full p-2 border border-gray-200 rounded focus:border-indigo-500"
+                                                        value={act.lecturerId}
+                                                        onChange={(e) => updateLecturerRow(idx, 'lecturerId', e.target.value)}
+                                                    >
+                                                        <option value="">-- Chọn Giảng viên --</option>
+                                                        {availableLecturers.map(l => (
+                                                            <option key={l.id} value={l.id}>{l.fullName}</option>
+                                                        ))}
+                                                    </select>
+                                                  </div>
+                                                  {act.lecturerDepartment && (
+                                                      <div className="text-xs text-gray-500 mt-1 ml-1">
+                                                          Khoa: <span className="font-medium text-indigo-600">{act.lecturerDepartment}</span>
+                                                      </div>
+                                                  )}
                                               </td>
                                               <td className="p-3">
                                                   <input 
@@ -447,6 +559,9 @@ export const Reports: React.FC = () => {
                                               <th className="p-3">MSSV</th>
                                               <th className="p-3">Họ và Tên</th>
                                               <th className="p-3">Lớp / Nhóm</th>
+                                              {selectedDept === 'Chuyên khoa lẻ' && (
+                                                <th className="p-3">Khoa đang thực tập</th>
+                                              )}
                                               <th className="p-3 text-center w-40">Số buổi vắng</th>
                                           </tr>
                                       </thead>
@@ -454,6 +569,13 @@ export const Reports: React.FC = () => {
                                           {availableStudents.map((s, index) => {
                                               const absentCount = getStudentAbsenceCount(s.id);
                                               const isAbsent = Number(absentCount) > 0;
+                                              const currentSubDept = selectedDept === 'Chuyên khoa lẻ' ? getStudentCurrentSubDept(s.id) : null;
+                                              
+                                              // If filtering by sub-dept is active (not All), hide students not in that sub-dept
+                                              if (selectedSubDept && currentSubDept !== selectedSubDept) {
+                                                  return null;
+                                              }
+
                                               return (
                                                 <tr key={s.id} className={isAbsent ? "bg-red-50" : "hover:bg-gray-50"}>
                                                     <td className="p-3 text-center text-gray-500">{index + 1}</td>
@@ -464,6 +586,17 @@ export const Reports: React.FC = () => {
                                                     <td className="p-3 text-gray-600">
                                                         {s.classId} <span className="text-xs bg-gray-200 px-1 rounded ml-1">{s.group}</span>
                                                     </td>
+                                                    {selectedDept === 'Chuyên khoa lẻ' && (
+                                                        <td className="p-3">
+                                                            {currentSubDept ? (
+                                                                <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs border border-indigo-100 font-medium flex items-center gap-1 w-fit">
+                                                                    <Network size={12}/> {currentSubDept}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-gray-400 text-xs italic">Chưa phân khoa</span>
+                                                            )}
+                                                        </td>
+                                                    )}
                                                     <td className="p-3 text-center">
                                                         <input 
                                                             type="number" 
@@ -514,10 +647,10 @@ export const Reports: React.FC = () => {
           </div>
       )}
 
+      {/* ... (List View and Modals Unchanged) ... */}
       {activeTab === 'list' && (
           <div className="space-y-4">
-             {/* Filter/Search Bar could go here */}
-             
+             {/* ... */}
              <div className="grid grid-cols-1 gap-4">
                  {reports.length === 0 ? (
                      <div className="text-center p-10 bg-white rounded-xl border border-gray-200 text-gray-500">
@@ -526,7 +659,6 @@ export const Reports: React.FC = () => {
                  ) : (
                      reports.map(report => {
                          const isExpanded = expandedReportId === report.id;
-                         // Fallback for old data structure if necessary
                          const absentCount = report.absentStudents?.length ?? (report as any).absentStudentIds?.length ?? 0;
 
                          return (
@@ -541,7 +673,18 @@ export const Reports: React.FC = () => {
                                              <span className="text-lg leading-none">{report.weekNumber}</span>
                                          </div>
                                          <div>
-                                             <h4 className="font-bold text-gray-800 text-lg">Khoa {report.department}</h4>
+                                             <div className="flex items-center gap-2">
+                                                <h4 className="font-bold text-gray-800 text-lg">Khoa {report.department}</h4>
+                                                {report.subDepartment ? (
+                                                    <span className="text-xs bg-teal-50 text-teal-700 px-2 py-1 rounded border border-teal-200">
+                                                        {report.subDepartment}
+                                                    </span>
+                                                ) : report.department === 'Chuyên khoa lẻ' && (
+                                                    <span className="text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded border border-purple-200">
+                                                        Tổng hợp
+                                                    </span>
+                                                )}
+                                             </div>
                                              <div className="text-xs text-gray-500 flex items-center gap-2">
                                                  <Calendar size={12}/> {report.startDate} - {report.endDate}
                                                  <span className="mx-1">•</span>
@@ -586,7 +729,12 @@ export const Reports: React.FC = () => {
                                                      <tbody>
                                                          {report.lecturerActivities?.map((act, i) => (
                                                              <tr key={i}>
-                                                                 <td className="p-2 border border-gray-100 font-medium">{act.lecturerName}</td>
+                                                                 <td className="p-2 border border-gray-100">
+                                                                    <div className="font-medium">{act.lecturerName}</div>
+                                                                    {act.lecturerDepartment && (
+                                                                        <div className="text-xs text-gray-500">Khoa: {act.lecturerDepartment}</div>
+                                                                    )}
+                                                                 </td>
                                                                  <td className="p-2 border border-gray-100 text-center">{act.clinicalSessions}</td>
                                                                  <td className="p-2 border border-gray-100 text-center">{act.theorySessions}</td>
                                                                  <td className="p-2 border border-gray-100">{act.targetAudience}</td>
@@ -651,7 +799,7 @@ export const Reports: React.FC = () => {
           </div>
       )}
 
-      {/* TARGET AUDIENCE SELECTION MODAL */}
+      {/* ... (Modal code) ... */}
       {audienceModal.isOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[80vh] animate-in zoom-in-95 duration-200">

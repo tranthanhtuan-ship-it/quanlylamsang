@@ -7,7 +7,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { Role, Student, Lecturer, Assignment, TeachingPlan, ClinicalRotation, OnCallSchedule, ShiftTime, DEPARTMENTS } from '../types';
 
 export const Dashboard: React.FC = () => {
-  const { user } = useAuth();
+  const { user, selectedDepartment } = useAuth();
   const [loading, setLoading] = useState(true);
 
   // --- ADMIN / LECTURER STATE ---
@@ -67,10 +67,14 @@ export const Dashboard: React.FC = () => {
         const me = lData.find(l => l.id === user.relatedId);
         setMyLecturerProfile(me);
         
-        if (me) {
-          const myAssigns = aData.filter(a => a.lecturerId === me.id);
-          setMyAssignments(myAssigns);
+        // FILTER ASSIGNMENTS BY SELECTED DEPT OR USER ID
+        let myAssigns = aData;
+        if (selectedDepartment) {
+            myAssigns = myAssigns.filter(a => a.department === selectedDepartment);
+        } else if (me) {
+            myAssigns = myAssigns.filter(a => a.lecturerId === me.id);
         }
+        setMyAssignments(myAssigns);
 
         const today = new Date();
         const monday = getMonday(new Date(today));
@@ -81,7 +85,12 @@ export const Dashboard: React.FC = () => {
         const endStr = sunday.toISOString().split('T')[0];
         setWeekDateRange({ start: startStr, end: endStr });
 
-        const filteredPlans = pData.filter(p => p.date >= startStr && p.date <= endStr);
+        // FILTER TEACHING PLANS BY SELECTED DEPT
+        let filteredPlans = pData.filter(p => p.date >= startStr && p.date <= endStr);
+        if (selectedDepartment) {
+            filteredPlans = filteredPlans.filter(p => p.department === selectedDepartment);
+        }
+
         const grouped: Record<string, TeachingPlan[]> = {};
         for (let i = 0; i < 7; i++) {
             const d = new Date(monday);
@@ -117,7 +126,9 @@ export const Dashboard: React.FC = () => {
     };
     
     if (user) loadData();
-  }, [user]);
+  }, [user, selectedDepartment]);
+
+  // ... (Rest of the file mostly unchanged until render)
 
   // --- ADMIN DB HANDLERS ---
   const handleExportDB = async () => {
@@ -362,12 +373,16 @@ export const Dashboard: React.FC = () => {
     return (
       <div className="animate-in fade-in duration-500">
         {/* Section 1: My Assignments */}
-        <h2 className="text-lg font-bold text-gray-800 mb-4 border-l-4 border-teal-500 pl-3">Lớp lâm sàng phụ trách</h2>
+        <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-bold text-gray-800 border-l-4 border-teal-500 pl-3">
+                {selectedDepartment ? `Lớp thực tập tại Khoa ${selectedDepartment}` : 'Lớp lâm sàng phụ trách'}
+            </h2>
+        </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
           {myAssignments.length === 0 ? (
             <div className="col-span-3 bg-gray-50 p-6 rounded-lg text-center text-gray-500 border border-dashed border-gray-300 text-sm">
-              Hiện chưa được phân công phụ trách nhóm nào.
+              Hiện chưa có phân công nào tại khoa này.
             </div>
           ) : (
             myAssignments.map(assign => (
@@ -398,10 +413,10 @@ export const Dashboard: React.FC = () => {
           )}
         </div>
 
-        {/* Section 2: Weekly Teaching Plans (All Depts) */}
+        {/* Section 2: Weekly Teaching Plans */}
         <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-bold text-gray-800 border-l-4 border-indigo-500 pl-3">
-                Kế hoạch giảng dạy toàn viện (Tuần này)
+                {selectedDepartment ? `Lịch giảng dạy Khoa ${selectedDepartment}` : 'Lịch giảng dạy toàn viện'} (Tuần này)
             </h2>
             <span className="text-sm font-medium text-gray-500 bg-white px-3 py-1 rounded border border-gray-200 shadow-sm">
                 {formatDate(weekDateRange.start)} - {formatDate(weekDateRange.end)}

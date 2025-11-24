@@ -5,11 +5,11 @@ import { useAuth } from '../context/AuthContext';
 import { Role } from '../types';
 import { 
   Users, GraduationCap, Calendar, ClipboardList, 
-  FileText, Activity, LogOut, LayoutDashboard, BookOpen, PieChart, Network, Search
+  FileText, Activity, LogOut, LayoutDashboard, BookOpen, PieChart, Network, MapPin
 } from 'lucide-react';
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, logout } = useAuth();
+  const { user, selectedDepartment, logout } = useAuth();
   const location = useLocation();
 
   const isActive = (path: string) => location.pathname === path ? 'bg-teal-700 text-white' : 'text-teal-100 hover:bg-teal-800';
@@ -34,13 +34,24 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   return (
     <div className="flex h-screen bg-gray-100">
       {/* Sidebar */}
-      <aside className="w-64 bg-teal-900 text-white flex flex-col shadow-lg">
+      <aside className="w-64 bg-teal-900 text-white flex flex-col shadow-lg shrink-0">
         <div className="p-6 border-b border-teal-800">
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Activity className="text-teal-400" />
             ClinicalPro
           </h1>
           <p className="text-xs text-teal-300 mt-1">Quản lý lâm sàng</p>
+          {selectedDepartment && (
+             <div className="mt-4 bg-teal-800/50 rounded-lg p-2 border border-teal-700">
+                <div className="flex items-start gap-2">
+                    <MapPin size={14} className="mt-0.5 text-teal-300"/>
+                    <div>
+                        <p className="text-[10px] text-teal-300 uppercase">Đang làm việc tại</p>
+                        <p className="text-xs font-bold text-white leading-tight">{selectedDepartment}</p>
+                    </div>
+                </div>
+             </div>
+          )}
         </div>
         
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">

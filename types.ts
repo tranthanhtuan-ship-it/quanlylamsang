@@ -47,6 +47,7 @@ export interface TeachingPlan {
   lecturerId: string;
   lecturerName: string; // Cache name
   department: string;
+  subDepartment?: string; // Khoa nhỏ (Optional)
   date: string;
   topic: string;
   targetAudience: string; // Đối tượng
@@ -56,6 +57,7 @@ export interface TeachingPlan {
 export interface Assignment {
   id: string;
   department: string; // Khoa thực tập (Khoa lớn)
+  subDepartment?: string; // Khoa nhỏ (Optional - VD: Mắt, TMH trong Chuyên khoa lẻ)
   startDate: string;
   endDate: string;
   studentIds: string[]; // Danh sách ID sinh viên được phân công
@@ -103,6 +105,7 @@ export interface OnCallSchedule {
 export interface ReportLecturerActivity {
   lecturerId: string;
   lecturerName: string; // Cache name for easier display
+  lecturerDepartment?: string; // Khoa của GV
   clinicalSessions: number; // Số buổi hướng dẫn lâm sàng
   theorySessions: number; // Số buổi lên lớp
   targetAudience: string; // Đối tượng lên lớp
@@ -117,6 +120,7 @@ export interface ClinicalReport {
   id: string;
   lecturerId: string; // Người tạo báo cáo
   department: string; // Khoa báo cáo
+  subDepartment?: string; // Khoa nhỏ (Optional)
   date: string; // Ngày báo cáo
   weekNumber: number;
   startDate: string;
@@ -133,34 +137,53 @@ export interface ClinicalReport {
   skillFeedback: string; // Nhận xét kỹ năng
 }
 
-// Mock Data Constants for Initial Load
+// Updated Department List: Grouped miscellaneous specialties
 export const DEPARTMENTS = [
   'Nội', 
   'Ngoại', 
   'Sản', 
   'Nhi', 
-  'Nhiễm', 
-  'Mắt', 
-  'Tai Mũi Họng', 
-  'Răng Hàm Mặt', 
-  'Phục hồi chức năng', 
-  'Da liễu', 
-  'Tâm thần', 
-  'ICU', 
-  'Cấp cứu', 
-  'Tim mạch lão học'
+  'Nhiễm',
+  'BV YDCT PHCN',
+  'Chuyên khoa lẻ'
 ];
 
 // Mapping for Sub-Departments
 export const SUB_DEPARTMENTS: Record<string, string[]> = {
   'Nội': ['Nội Tim mạch', 'Nội Hô hấp', 'Nội Tiêu hóa', 'Nội Thần kinh', 'Nội Thận - Tiết niệu', 'Nội Cơ Xương Khớp', 'Nội Tiết', 'Nội Tổng hợp'],
   'Ngoại': ['Ngoại Tổng quát', 'Ngoại Lồng ngực', 'Ngoại Thần kinh', 'Ngoại Chấn thương chỉnh hình', 'Ngoại Tiết niệu'],
-  'Sản': ['Sản bệnh', 'Phòng sanh', 'Hậu phẫu', 'Phụ khoa'],
+  'Sản': ['Sản bệnh', 'Phòng sanh', 'Hậu phẫu', 'Phụ khoa', 'Sản (TT YT LX)'],
   'Nhi': ['Nhi Hô hấp', 'Nhi Tiêu hóa', 'Nhi Nhiễm', 'Nhi Sơ sinh', 'Cấp cứu Nhi'],
-  'Cấp cứu': ['Cấp cứu Nội', 'Cấp cứu Ngoại'],
-  'ICU': ['ICU A', 'ICU B'],
-  // Default empty arrays for others, can be extended
+  'Nhiễm': ['Khoa Nhiễm'],
+  'BV YDCT PHCN': ['Khoa Y học cổ truyền', 'Khoa Phục hồi chức năng', 'Châm cứu - Dưỡng sinh'],
+  'Chuyên khoa lẻ': [
+    // BV 3CK
+    'Mắt (BV 3CK)', 
+    'Tai Mũi Họng (BV 3CK)', 
+    'Răng Hàm Mặt (BV 3CK)',
+    // BV ĐK AG
+    'Mắt (BV ĐK AG)',
+    'Tai Mũi Họng (BV ĐK AG)',
+    'Răng Hàm Mặt (BV ĐK AG)',
+    'Da liễu (BV ĐK AG)', 
+    'Phục hồi chức năng (BV ĐK AG)', 
+    'ICU (BV ĐK AG)', 
+    'Tâm thần (BV ĐK AG)',
+    'Cấp cứu (BV ĐK AG)',
+    'Tim mạch (BV ĐK AG)',
+    // BV TIM MẠCH
+    'Tim mạch (BV TIM MẠCH)', 
+    'Cấp cứu (BV TIM MẠCH)',
+    // BV SN AG
+    'Da liễu (BV SN AG)',
+    'Phục hồi chức năng (BV SN AG)'
+  ]
 };
 
 export const SUBJECTS = ['Nội khoa', 'Ngoại khoa', 'Sản phụ khoa', 'Nhi khoa', 'Truyền nhiễm', 'Chuyên khoa lẻ'];
 export const MAJORS: Major[] = ['Điều dưỡng', 'Y sỹ đa khoa', 'Y sỹ cổ truyền', 'Hộ sinh'];
+export const SHIFT_HOURS: Record<ShiftTime, string> = {
+  [ShiftTime.MORNING]: '07:00 - 11:00',
+  [ShiftTime.AFTERNOON]: '13:00 - 17:00',
+  [ShiftTime.EVENING]: '18:00 - 21:30'
+};

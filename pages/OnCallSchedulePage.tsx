@@ -13,7 +13,7 @@ const SHIFT_HOURS: Record<ShiftTime, string> = {
 };
 
 export const OnCallSchedulePage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, selectedDepartment } = useAuth();
   const isAdmin = user?.role === Role.ADMIN;
   const isStudent = user?.role === Role.STUDENT;
   
@@ -65,6 +65,14 @@ export const OnCallSchedulePage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Apply Department Lock
+  useEffect(() => {
+      if (selectedDepartment) {
+          setFilterDept(selectedDepartment);
+          setViewDept(selectedDepartment);
+      }
+  }, [selectedDepartment]);
 
   const loadData = async () => {
     setLoading(true);
@@ -197,6 +205,7 @@ export const OnCallSchedulePage: React.FC = () => {
       setSelectedStudentIds(new Set());
   };
 
+  // ... (Rest of Handlers kept same)
   const toggleStudent = (id: string) => {
     const newSet = new Set(selectedStudentIds);
     if (newSet.has(id)) newSet.delete(id);
@@ -331,6 +340,7 @@ export const OnCallSchedulePage: React.FC = () => {
   if (isStudent) {
     return (
       <div className="h-full flex flex-col animate-in fade-in">
+        {/* ... (Student View UI Unchanged) ... */}
         <div className="mb-6">
            <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
                <Calendar className="text-teal-600" /> Điểm Danh Trực Lâm Sàng
@@ -544,7 +554,12 @@ export const OnCallSchedulePage: React.FC = () => {
                 <div className="space-y-3">
                     <div>
                         <label className="block text-xs font-bold text-gray-500 mb-1">Khoa thực tập (Khoa Lớn)</label>
-                        <select className="w-full p-2 border rounded-lg text-sm" value={filterDept} onChange={e => handleDeptChange(e.target.value)}>
+                        <select 
+                            className={`w-full p-2 border rounded-lg text-sm ${selectedDepartment ? 'bg-gray-100' : ''}`} 
+                            value={filterDept} 
+                            onChange={e => handleDeptChange(e.target.value)}
+                            disabled={!!selectedDepartment}
+                        >
                             {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
                         </select>
                     </div>
@@ -745,7 +760,12 @@ export const OnCallSchedulePage: React.FC = () => {
                 </div>
                 <div>
                     <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Khoa</label>
-                    <select className="w-full p-2 border rounded-lg text-sm" value={viewDept} onChange={e => setViewDept(e.target.value)}>
+                    <select 
+                        className={`w-full p-2 border rounded-lg text-sm ${selectedDepartment ? 'bg-gray-100' : ''}`}
+                        value={viewDept} 
+                        onChange={e => setViewDept(e.target.value)}
+                        disabled={!!selectedDepartment}
+                    >
                         <option value="">-- Tất cả các khoa --</option>
                         {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
@@ -758,6 +778,7 @@ export const OnCallSchedulePage: React.FC = () => {
             </div>
             
             <div className="flex-1 overflow-auto">
+                {/* ... (Table Content Unchanged) ... */}
                 <table className="w-full text-left text-sm text-gray-600">
                     <thead className="bg-white text-gray-700 font-bold uppercase text-xs border-b border-gray-200 sticky top-0 shadow-sm z-10">
                         <tr>

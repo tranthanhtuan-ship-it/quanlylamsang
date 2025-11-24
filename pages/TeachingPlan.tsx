@@ -1,12 +1,12 @@
 
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { TeachingPlanService, LecturerService, StudentService, AssignmentService } from '../services/db';
-import { TeachingPlan, Lecturer, DEPARTMENTS, Role, Student, Assignment } from '../types';
+import { TeachingPlan, Lecturer, DEPARTMENTS, SUB_DEPARTMENTS, Role, Student, Assignment } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { Plus, Trash2, Edit, X, Calendar, User, BookOpen, MapPin, Users, AlertTriangle, BarChart2, List, GraduationCap, ClipboardCheck, Search, RotateCcw, CheckCircle } from 'lucide-react';
 
 export const TeachingPlanPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, selectedDepartment } = useAuth();
   const isStudent = user?.role === Role.STUDENT;
   const isAdmin = user?.role === Role.ADMIN;
   
@@ -44,6 +44,7 @@ export const TeachingPlanPage: React.FC = () => {
 
   // Common Filters
   const [filterDept, setFilterDept] = useState('');
+  const [filterSubDept, setFilterSubDept] = useState(''); // NEW: Sub Dept Filter
   const [startDate, setStartDate] = useState(monday.toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(sunday.toISOString().split('T')[0]);
 
@@ -53,6 +54,7 @@ export const TeachingPlanPage: React.FC = () => {
     lecturerId: '',
     lecturerName: '',
     department: '',
+    subDepartment: '', // NEW
     date: new Date().toISOString().split('T')[0],
     topic: '',
     targetAudience: '',
@@ -96,6 +98,11 @@ export const TeachingPlanPage: React.FC = () => {
     setPlans(pData);
     setLecturers(lData);
 
+    // Auto-Select Filter Dept if context exists
+    if (selectedDepartment) {
+        setFilterDept(selectedDepartment);
+    }
+
     if (isStudent) {
         setAllStudents(sData || []);
         setAllAssignments(aData || []);
@@ -105,7 +112,7 @@ export const TeachingPlanPage: React.FC = () => {
   };
 
   // --- LOGIC FOR STUDENT SEARCH VIEW ---
-  
+  // ... (Search logic unchanged) ...
   const handleStudentSearch = () => {
       if (!searchKeyword.trim()) {
           alert("Vui lòng nhập Mã sinh viên hoặc Họ tên.");
@@ -135,18 +142,14 @@ export const TeachingPlanPage: React.FC = () => {
   const studentViewData = useMemo(() => {
     if (!isStudent || !foundStudent) return { currentAssignments: [], visiblePlans: [] };
 
-    // 1. Find assignments active within the selected Date Range for the FOUND student
     const activeAssignments = allAssignments.filter(a => {
         const belongsToStudent = a.studentIds.includes(foundStudent.id);
-        // Check for date overlap: [a.start, a.end] vs [startDate, endDate]
         const dateOverlap = (a.startDate <= endDate) && (a.endDate >= startDate);
         return belongsToStudent && dateOverlap;
     });
 
     const activeDepts = new Set(activeAssignments.map(a => a.department));
 
-    // 2. Filter Teaching Plans
-    // Show plans that are in the active Departments AND within date range
     const visiblePlans = plans.filter(p => {
         const inDate = p.date >= startDate && p.date <= endDate;
         const inDept = activeDepts.has(p.department);
@@ -161,16 +164,21 @@ export const TeachingPlanPage: React.FC = () => {
   const filteredPlans = useMemo(() => {
       return plans.filter(p => {
         const matchDept = filterDept ? p.department === filterDept : true;
+        // New Sub Dept Filter
+        const matchSubDept = filterSubDept ? p.subDepartment === filterSubDept : true;
+        
         const matchDateRange = p.date >= startDate && p.date <= endDate;
         
         const isLecturer = user?.role === Role.LECTURER;
-        const matchUser = (activeTab === 'management' && isLecturer) 
+        // If selectedDepartment exists (context locked), user sees plans for that department regardless of lecturerId
+        // Otherwise fallback to lecturerId check
+        const matchUser = (activeTab === 'management' && isLecturer && !selectedDepartment) 
             ? p.lecturerId === user.relatedId 
             : true; 
         
-        return matchDept && matchDateRange && matchUser;
+        return matchDept && matchSubDept && matchDateRange && matchUser;
       });
-  }, [plans, filterDept, startDate, endDate, user, activeTab]);
+  }, [plans, filterDept, filterSubDept, startDate, endDate, user, activeTab, selectedDepartment]);
 
   const groupedPlans = useMemo(() => {
       const groups: Record<string, TeachingPlan[]> = {};
@@ -186,7 +194,6 @@ export const TeachingPlanPage: React.FC = () => {
   }, [filteredPlans]);
 
   // Filter Lecturers based on selected Department in Form
-  // UPDATED: Robust matching logic + Filter by manual input
   const formAvailableLecturers = useMemo(() => {
       if (!formData.department) return [];
       const targetDept = formData.department.trim().toLowerCase();
@@ -201,7 +208,6 @@ export const TeachingPlanPage: React.FC = () => {
           return false;
       });
 
-      // Further filter by typed name if it's not an exact match yet
       if (formData.lecturerName) {
           const search = formData.lecturerName.toLowerCase();
           list = list.filter(l => l.fullName.toLowerCase().includes(search));
@@ -210,22 +216,30 @@ export const TeachingPlanPage: React.FC = () => {
       return list;
   }, [lecturers, formData.department, formData.lecturerName]);
 
+  const availableFilterSubDepts = useMemo(() => {
+      return filterDept ? (SUB_DEPARTMENTS[filterDept] || []) : [];
+  }, [filterDept]);
+
+  const availableFormSubDepts = useMemo(() => {
+      return formData.department ? (SUB_DEPARTMENTS[formData.department] || []) : [];
+  }, [formData.department]);
+
   // --- HANDLERS ---
   const handleOpenAdd = async () => {
-    // Force reload lecturers to ensure sync with Admin page
+    // Force reload lecturers
     const freshLecturers = await LecturerService.getAll();
     setLecturers(freshLecturers);
 
     let defaultLecturerId = '';
     let defaultLecturerName = '';
-    let defaultDept = '';
+    let defaultDept = selectedDepartment || ''; // Default to context if available
 
     if (user?.role === Role.LECTURER && user.relatedId) {
         const me = freshLecturers.find(l => l.id === user.relatedId);
         if (me) {
             defaultLecturerId = me.id;
             defaultLecturerName = me.fullName;
-            defaultDept = me.department;
+            if (!defaultDept) defaultDept = me.department; // Fallback if no context
         }
     }
     setFormData({...initialForm, lecturerId: defaultLecturerId, lecturerName: defaultLecturerName, department: defaultDept});
@@ -243,7 +257,6 @@ export const TeachingPlanPage: React.FC = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Relax validation for lecturerId (allow manual name)
     if (!formData.lecturerName || !formData.department || !formData.date || !formData.topic) {
         return alert("Vui lòng điền đầy đủ thông tin bắt buộc (Khoa, Ngày, Giảng viên, Tên bài).");
     }
@@ -263,19 +276,19 @@ export const TeachingPlanPage: React.FC = () => {
       setFormData(prev => ({
           ...prev,
           department: newDept,
+          subDepartment: '', // Reset sub dept
           lecturerId: '',
           lecturerName: ''
       }));
       setShowSuggestions(false);
   };
 
-  // Handle Manual Typing in Lecturer Field
   const handleLecturerNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const name = e.target.value;
       setFormData(prev => ({
           ...prev,
           lecturerName: name,
-          lecturerId: '' // Clear ID when typing manually (will be re-set if clicked)
+          lecturerId: '' 
       }));
       setShowSuggestions(true);
   };
@@ -285,7 +298,8 @@ export const TeachingPlanPage: React.FC = () => {
           ...prev,
           lecturerId: lecturer.id,
           lecturerName: lecturer.fullName,
-          department: lecturer.department // ensure consistency
+          department: lecturer.department,
+          subDepartment: '' // potentially clear sub-dept as main dept might theoretically change if lecturer overrides it
       }));
       setShowSuggestions(false);
   };
@@ -294,9 +308,8 @@ export const TeachingPlanPage: React.FC = () => {
   // RENDER
   // ========================================================================
 
-  // ... (Student view logic - kept same, omitting for brevity to focus on changes) ...
   if (isStudent) {
-      // Return Student View (Same as before)
+      // ... (Student View JSX Unchanged) ...
       return (
         <div className="h-full flex flex-col animate-in fade-in">
             <div className="mb-6">
@@ -437,7 +450,12 @@ export const TeachingPlanPage: React.FC = () => {
                                             {studentViewData.visiblePlans.map(plan => (
                                                 <tr key={plan.id} className="hover:bg-gray-50 transition">
                                                     <td className="px-4 py-3 font-medium whitespace-nowrap text-gray-900">{plan.date}</td>
-                                                    <td className="px-4 py-3">{plan.department}</td>
+                                                    <td className="px-4 py-3">
+                                                        {plan.department}
+                                                        {plan.subDepartment && (
+                                                            <div className="text-xs text-teal-600 font-medium mt-0.5">{plan.subDepartment}</div>
+                                                        )}
+                                                    </td>
                                                     <td className="px-4 py-3 font-bold text-indigo-700">{plan.topic}</td>
                                                     <td className="px-4 py-3">{plan.lecturerName}</td>
                                                     <td className="px-4 py-3">{plan.room}</td>
@@ -455,7 +473,7 @@ export const TeachingPlanPage: React.FC = () => {
                 </div>
             )}
         </div>
-      )
+      );
   }
 
   // ... (Admin/Lecturer Views) ...
@@ -495,12 +513,32 @@ export const TeachingPlanPage: React.FC = () => {
 
       {/* COMMON FILTERS */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-4 grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-          <div className="md:col-span-3">
-              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Lọc theo Khoa</label>
-              <select className="w-full p-2 border rounded-lg text-sm" value={filterDept} onChange={e => setFilterDept(e.target.value)}>
-                  <option value="">-- Tất cả khoa --</option>
-                  {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
+          <div className="md:col-span-4 flex gap-2">
+              <div className="flex-1">
+                <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Lọc theo Khoa</label>
+                <select 
+                    className={`w-full p-2 border rounded-lg text-sm ${selectedDepartment ? 'bg-gray-100' : ''}`}
+                    value={filterDept} 
+                    onChange={e => { setFilterDept(e.target.value); setFilterSubDept(''); }}
+                    disabled={!!selectedDepartment}
+                >
+                    <option value="">-- Tất cả khoa --</option>
+                    {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+              {filterDept && availableFilterSubDepts.length > 0 && (
+                  <div className="flex-1">
+                    <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Khoa nhỏ</label>
+                    <select 
+                        className="w-full p-2 border rounded-lg text-sm"
+                        value={filterSubDept} 
+                        onChange={e => setFilterSubDept(e.target.value)}
+                    >
+                        <option value="">-- Tất cả --</option>
+                        {availableFilterSubDepts.map(sd => <option key={sd} value={sd}>{sd}</option>)}
+                    </select>
+                  </div>
+              )}
           </div>
           <div className="md:col-span-5">
               <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Thời gian (Từ - Đến)</label>
@@ -510,10 +548,10 @@ export const TeachingPlanPage: React.FC = () => {
                   <input type="date" className="w-full p-2 border rounded-lg text-sm" value={endDate} onChange={e => setEndDate(e.target.value)}/>
               </div>
           </div>
-          <div className="md:col-span-4 text-right pb-2 text-sm text-gray-500">
+          <div className="md:col-span-3 text-right pb-2 text-sm text-gray-500">
              {activeTab === 'management' 
                 ? `Hiển thị ${filteredPlans.length} kế hoạch`
-                : `Tổng cộng ${filteredPlans.length} buổi giảng toàn viện`
+                : `Tổng cộng ${filteredPlans.length} buổi giảng`
              }
           </div>
       </div>
@@ -525,7 +563,7 @@ export const TeachingPlanPage: React.FC = () => {
                 <thead className="bg-gray-50 text-gray-700 font-bold uppercase text-xs sticky top-0">
                     <tr>
                         <th className="px-6 py-3 w-32">Ngày</th>
-                        <th className="px-6 py-3">Khoa</th>
+                        <th className="px-6 py-3">Khoa / Khoa nhỏ</th>
                         <th className="px-6 py-3">Giảng viên</th>
                         <th className="px-6 py-3">Tên bài / Chủ đề</th>
                         <th className="px-6 py-3">Đối tượng</th>
@@ -545,7 +583,12 @@ export const TeachingPlanPage: React.FC = () => {
                         filteredPlans.map(plan => (
                             <tr key={plan.id} className="hover:bg-gray-50 transition">
                                 <td className="px-6 py-4 font-medium">{plan.date}</td>
-                                <td className="px-6 py-4">{plan.department}</td>
+                                <td className="px-6 py-4">
+                                    <div>{plan.department}</div>
+                                    {plan.subDepartment && (
+                                        <div className="text-xs text-teal-600 font-medium mt-0.5 bg-teal-50 w-fit px-1.5 py-0.5 rounded">{plan.subDepartment}</div>
+                                    )}
+                                </td>
                                 <td className="px-6 py-4 font-medium text-gray-900 flex items-center gap-2">
                                     {plan.lecturerName}
                                     {plan.lecturerId && <CheckCircle size={12} className="text-teal-500" title="Đã liên kết hồ sơ"/>}
@@ -602,8 +645,15 @@ export const TeachingPlanPage: React.FC = () => {
                                                 <Calendar size={16} className="text-gray-400"/> {plan.date}
                                             </div>
                                             <div className="flex-1">
-                                                <div className="font-bold text-indigo-700 mb-1">{plan.topic}</div>
-                                                <div className="text-xs text-gray-500 flex items-center gap-3">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="font-bold text-indigo-700">{plan.topic}</div>
+                                                    {plan.subDepartment && (
+                                                        <span className="text-xs bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100">
+                                                            {plan.subDepartment}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="text-xs text-gray-500 flex items-center gap-3 mt-1">
                                                     <span className="flex items-center gap-1">
                                                         <User size={12}/> 
                                                         {plan.lecturerName}
@@ -642,22 +692,36 @@ export const TeachingPlanPage: React.FC = () => {
              </div>
              <form onSubmit={handleSave} className="p-6 space-y-4">
                  <div className="grid grid-cols-2 gap-4">
-                     <div>
+                     <div className="col-span-2 md:col-span-1">
                         <label className="block text-sm font-medium text-gray-700 mb-1">Khoa</label>
                         <select 
                             required
-                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-teal-500"
+                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-teal-500 ${selectedDepartment ? 'bg-gray-100' : ''}`}
                             value={formData.department}
                             onChange={e => handleDeptChangeInForm(e.target.value)}
+                            disabled={!!selectedDepartment}
                         >
                             <option value="">-- Chọn Khoa --</option>
                             {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
                         </select>
                      </div>
-                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Ngày lên lớp</label>
-                        <input required type="date" className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-teal-500" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
+                     <div className="col-span-2 md:col-span-1">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Khoa nhỏ (Tùy chọn)</label>
+                        <select 
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-teal-500"
+                            value={formData.subDepartment}
+                            onChange={e => setFormData({...formData, subDepartment: e.target.value})}
+                            disabled={!formData.department}
+                        >
+                            <option value="">-- Không chọn --</option>
+                            {availableFormSubDepts.map(sd => <option key={sd} value={sd}>{sd}</option>)}
+                        </select>
                      </div>
+                 </div>
+                 
+                 <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Ngày lên lớp</label>
+                    <input required type="date" className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-teal-500" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
                  </div>
                  
                  {/* COMBOBOX FOR LECTURER */}
